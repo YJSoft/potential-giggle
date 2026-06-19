@@ -1,0 +1,286 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EventPhase {
+  SETUP
+  REGISTRATION_OPEN
+  EVENT_DAY
+  JUDGING
+  CLOSING
+  RESULTS_PUBLISHED
+  ARCHIVED
+}
+
+enum Role {
+  ORGANIZER
+  JUDGE
+  PARTICIPANT
+}
+
+enum RegistrationStatus {
+  PENDING
+  CONFIRMED
+  WAITLISTED
+}
+
+enum DecisionStatus {
+  PROPOSAL
+  DECIDED
+}
+
+enum ResourceType {
+  WIFI
+  TRIAL_ACCOUNT
+  LINK
+  TEXT
+}
+
+model User {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  name       String?
+  createdAt  DateTime @default(now())
+
+  memberships       EventMembership[]
+  registrations     Registration[]
+  ownedDecisions    Decision[]        @relation("DecisionOwner")
+  decisionVersions  DecisionVersion[]
+  decisionComments  DecisionComment[]
+  scoreEntries      ScoreEntry[]
+  awardsGranted     Award[]
+  expenses          Expense[]
+  magicLinkRequests MagicLinkAudit[]
+}
+
+model Event {
+  id          String     @id @default(uuid())
+  slug        String     @unique
+  name        String
+  description String?
+  phase       EventPhase @default(SETUP)
+  formSchema  Json       @default("[]")
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  memberships    EventMembership[]
+  registrations  Registration[]
+  teams          Team[]
+  resources      Resource[]
+  decisions      Decision[]
+  scoringRounds  ScoringRound[]
+  awards         Award[]
+  expenses       Expense[]
+  incomes        Income[]
+  expenseCategories ExpenseCategory[]
+}
+
+model EventMembership {
+  id       String @id @default(uuid())
+  eventId  String
+  userId   String
+  role     Role
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+}
+
+model Registration {
+  id          String             @id @default(uuid())
+  eventId     String
+  userId      String?
+  teamId      String?
+  fields      Json               @default("{}")
+  status      RegistrationStatus @default(PENDING)
+  checkedIn   Boolean            @default(false)
+  checkedInAt DateTime?
+  createdAt   DateTime           @default(now())
+
+  event Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id])
+  team  Team?  @relation(fields: [teamId], references: [id])
+}
+
+model Team {
+  id       String  @id @default(uuid())
+  eventId  String
+  name     String
+  code     String?
+
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registrations Registration[]
+  scoreEntries  ScoreEntry[]
+  awards        Award[]
+
+  @@unique([eventId, code])
+}
+
+model Resource {
+  id         String       @id @default(uuid())
+  eventId    String
+  type       ResourceType
+  title      String
+  content    Json
+  visible    Boolean      @default(false)
+  revealAt   DateTime?
+  hideAt     DateTime?
+  sortOrder  Int          @default(0)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model Decision {
+  id        String         @id @default(uuid())
+  eventId   String
+  topic     String
+  category  String?
+  status    DecisionStatus @default(PROPOSAL)
+  ownerId   String?
+  createdAt DateTime       @default(now())
+
+  event    Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  owner    User?             @relation("DecisionOwner", fields: [ownerId], references: [id])
+  versions DecisionVersion[]
+  comments DecisionComment[]
+}
+
+model DecisionVersion {
+  id         String   @id @default(uuid())
+  decisionId String
+  options    String?
+  final      String?
+  note       String?
+  createdBy  String?
+  createdAt  DateTime @default(now())
+
+  decision Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [createdBy], references: [id])
+}
+
+model DecisionComment {
+  id         String   @id @default(uuid())
+  decisionId String
+  authorId   String
+  body       String
+  createdAt  DateTime @default(now())
+
+  decision Decision @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorId], references: [id])
+}
+
+model ScoringRound {
+  id        String    @id @default(uuid())
+  eventId   String
+  name      String    @default("Main Round")
+  locked    Boolean   @default(false)
+  lockedAt  DateTime?
+  sortOrder Int       @default(0)
+
+  event      Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  criteria   Criterion[]
+  scoreEntries ScoreEntry[]
+}
+
+model Criterion {
+  id          String @id @default(uuid())
+  roundId     String
+  name        String
+  description String?
+  maxScore    Float  @default(10)
+  weight      Float  @default(1)
+  sortOrder   Int    @default(0)
+
+  round        ScoringRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  scoreEntries ScoreEntry[]
+}
+
+model ScoreEntry {
+  id          String   @id @default(uuid())
+  roundId     String
+  criterionId String
+  teamId      String
+  judgeId     String
+  score       Float
+  comment     String?
+  submittedAt DateTime @default(now())
+
+  round     ScoringRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  criterion Criterion    @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+  team      Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  judge     User         @relation(fields: [judgeId], references: [id])
+
+  @@unique([roundId, criterionId, teamId, judgeId])
+}
+
+model Award {
+  id        String   @id @default(uuid())
+  eventId   String
+  teamId    String
+  name      String
+  grantedBy String?
+  createdAt DateTime @default(now())
+
+  event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  team      Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  grantor   User? @relation(fields: [grantedBy], references: [id])
+}
+
+model ExpenseCategory {
+  id        String  @id @default(uuid())
+  eventId   String
+  name      String
+  budgetCap Float?
+
+  event    Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  eventId     String
+  categoryId  String?
+  description String
+  amount      Float
+  currency    String   @default("KRW")
+  payerId     String?
+  receiptUrl  String?
+  incurredAt  DateTime
+  createdAt   DateTime @default(now())
+
+  event    Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  category ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  payer    User?            @relation(fields: [payerId], references: [id])
+}
+
+model Income {
+  id          String   @id @default(uuid())
+  eventId     String
+  source      String
+  description String?
+  amount      Float
+  currency    String   @default("KRW")
+  receivedAt  DateTime
+  createdAt   DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model MagicLinkAudit {
+  id        String   @id @default(uuid())
+  userId    String?
+  email     String
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
